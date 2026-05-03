@@ -7,3 +7,5 @@ newspaper3k>=0.2.8
 lxml_html_clean
 pandas
 plotly
+google-cloud-language>=2.16.0
+python-dotenv>=1.0.1

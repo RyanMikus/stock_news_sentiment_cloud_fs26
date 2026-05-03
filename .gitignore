@@ -1,8 +1,16 @@
-.venv/
+# Secrets and local config
+.env
+credentials/
+*.json
+
+# Python
 __pycache__/
 *.pyc
-.env
-*.json
+test_*.py
+
+# Virtual environment
+.venv/
+
+# OS / editor
 .DS_Store
 .vscode/
-.streamlit/
