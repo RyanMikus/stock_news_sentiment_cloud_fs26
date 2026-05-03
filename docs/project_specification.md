@@ -22,6 +22,8 @@ The application helps users understand recent news about companies and stocks by
 
 The application is implemented in Python and deployed on Google Cloud App Engine.
 
+The project follows the teacher's required technology direction: Google News RSS through `gnews`, full article extraction with `newspaper3k`, Google Cloud Natural Language API for sentiment and entity analysis, App Engine for deployment, and Firestore in Datastore mode for storage.
+
 ## 3. Target Users
 
 The target users are:
@@ -87,38 +89,53 @@ Example searches:
 
 The application retrieves recent articles using the Google News RSS feed through the `gnews` Python package.
 
-### 5.3 Article Retrieval
+The user can select a country parameter for the news search. The default country is the United States.
 
-The application uses a multi-step article retrieval and extraction strategy.
+### 5.3 Article URL Decoding
 
-First, `gnews` is used to retrieve news metadata, including:
+Google News RSS often returns Google News redirect URLs instead of direct publisher URLs.
 
-- article title
-- description
-- source
-- publication date
-- article URL
+The application therefore uses `googlenewsdecoder` to decode Google News URLs into the real publisher URLs before article extraction.
 
-Then, the application attempts to retrieve and extract the full article text from the URL.
+For each article, the application stores:
 
-The full-text extraction strategy is:
+- original Google News URL
+- decoded publisher URL if decoding succeeded
+- URL decoding status
+- URL decoding error reason if decoding failed
 
-1. Use `newspaper3k` as the primary full-text article extraction library.
-2. If `newspaper3k` fails, returns empty text, or returns unusable cookie/consent-page text, use `trafilatura` as an open-source fallback extraction library.
-3. If both `newspaper3k` and `trafilatura` fail, use the article title and description from `gnews` as fallback text.
-4. Store the extraction status and error reason if available.
-5. Continue processing the remaining articles.
-
-Possible extraction statuses:
+Possible URL decoding statuses:
 
 - `success`
-- `partial`
-- `blocked`
+- `decode_failed`
+
+### 5.4 Article Text Extraction
+
+After decoding the Google News URL, the application uses `newspaper3k` to retrieve and parse the article from the decoded publisher URL.
+
+The application attempts to extract:
+
+- article title
+- full article text
+- authors if available
+- publish date if available
+- top image if available
+
+The application does not use `trafilatura`.
+
+The application does not use article title and description from `gnews` as fallback text for sentiment analysis.
+
+If article extraction fails, the article is marked as failed and is not sent to the Natural Language API.
+
+Possible article extraction statuses:
+
+- `success`
+- `decode_failed`
+- `extraction_failed`
+- `empty_article`
 - `failed`
 
-The application does not try to bypass paywalls, protected content, login pages, or access restrictions. It only tries alternative open-source text extraction methods and then falls back to available metadata.
-
-### 5.4 Cookie Pages, Paywalls, and Blocked Articles
+### 5.5 Cookie Pages, Paywalls, and Blocked Articles
 
 Some news websites may block automatic article extraction because of:
 
@@ -128,30 +145,25 @@ Some news websites may block automatic article extraction because of:
 - JavaScript-rendered content
 - unavailable or redirected article URLs
 
-The application should not fail when this happens.
+The application should not crash when this happens.
 
-The application uses the following fallback strategy:
+The application handles blocked or unavailable articles by:
 
-- first try to extract the full article text with `newspaper3k`
-- if `newspaper3k` fails or returns cookie/consent-page text, try `trafilatura`
-- if `trafilatura` also fails, use the title and description from `gnews`
-- mark the article with an extraction status such as `blocked`, `partial`, or `failed`
-- store the original URL
-- store the reason for the extraction problem if available
-- continue processing the remaining articles
+- storing the article metadata
+- storing the original Google News URL
+- storing the decoded publisher URL if available
+- storing the extraction status
+- storing the extraction error reason if available
+- skipping sentiment and entity analysis for failed articles
+- continuing with the remaining articles
 
-The first implementation will use:
+The application does not try to bypass paywalls, login pages, protected content, or access restrictions.
 
-- `gnews` for news metadata and URLs
-- `newspaper3k` for primary article extraction
-- `trafilatura` for open-source fallback extraction
-- `gnews` title and description as final fallback text
+### 5.6 Sentiment Analysis
 
-### 5.5 Sentiment Analysis
+The application analyzes successfully extracted article text using the Google Cloud Natural Language API.
 
-The application analyzes article text using the Google Cloud Natural Language API.
-
-For each article, the application stores:
+For each successfully extracted article, the application stores:
 
 - overall sentiment score
 - sentiment magnitude
@@ -164,9 +176,9 @@ Sentiment interpretation:
 - score close to 0: neutral
 - high magnitude: strong emotional content
 
-### 5.6 Entity Extraction
+### 5.7 Entity Extraction
 
-The application extracts named entities from article text using the Google Cloud Natural Language API.
+The application extracts named entities from successfully extracted article text using the Google Cloud Natural Language API.
 
 Important entity types include:
 
@@ -182,7 +194,7 @@ Important entity types include:
 
 Entities are stored together with the analyzed article.
 
-### 5.7 Advanced Gemini Feature
+### 5.8 Advanced Gemini Feature
 
 The application implements the optional advanced AI feature using Gemini in Vertex AI.
 
@@ -200,7 +212,7 @@ The Google Cloud Natural Language API remains the main service for structured se
 
 Gemini is used as an advanced extension for natural-language summaries and deeper interpretation.
 
-### 5.8 Stock Detail Page
+### 5.9 Stock Detail Page
 
 Each stock has a detail page.
 
@@ -218,7 +230,7 @@ The stock detail page displays:
 - Gemini-generated stock news summary
 - related stock suggestions
 
-### 5.9 Stock Price Chart
+### 5.10 Stock Price Chart
 
 The application displays stock price data for the selected company.
 
@@ -236,7 +248,7 @@ The first implementation may use `yfinance` for retrieving stock price data.
 
 The chart can be implemented using Plotly.
 
-### 5.10 Quantitative Stock Metrics
+### 5.11 Quantitative Stock Metrics
 
 The application displays selected quantitative stock metrics.
 
@@ -260,7 +272,7 @@ Possible metrics include:
 
 The availability of metrics depends on the selected data source.
 
-### 5.11 Related Stock Suggestions
+### 5.12 Related Stock Suggestions
 
 The application suggests related stocks for the selected company.
 
@@ -289,26 +301,27 @@ Example relation types:
 - customer
 - market peer
 
-### 5.12 Data Storage
+### 5.13 Data Storage
 
 The application stores analyzed article data in Firestore in Datastore mode.
 
 Stored data includes:
 
 - article metadata
-- full article text if available
-- fallback text if full article extraction failed
+- original Google News URL
+- decoded publisher URL
+- full article text if extraction succeeded
 - article extraction status
 - article extraction error reason if available
-- sentiment results
-- extracted entities
+- sentiment results if analysis succeeded
+- extracted entities if analysis succeeded
 - Gemini summary if available
 - related ticker symbols
 - timestamps
 
 The stored data can be queried later by the application.
 
-### 5.13 Querying Stored Data
+### 5.14 Querying Stored Data
 
 The application supports querying stored data with filters.
 
@@ -330,9 +343,9 @@ Example queries:
 - show articles published in the last 7 days
 - show articles mentioning Microsoft and OpenAI
 - show technology-sector articles with positive sentiment
-- show articles where full text extraction failed
+- show articles where article extraction failed
 
-### 5.14 Visualizations
+### 5.15 Visualizations
 
 The application provides visualizations for analysis results.
 
@@ -350,7 +363,7 @@ Possible visualizations:
 
 Visualizations are created using Streamlit charts, Plotly, or Dash components.
 
-### 5.15 Data Export
+### 5.16 Data Export
 
 The application allows users to export query results.
 
@@ -365,7 +378,8 @@ The first implementation will support at least CSV export.
 Exported data may include:
 
 - article title
-- article URL
+- original Google News URL
+- decoded publisher URL
 - source
 - publication date
 - company name
@@ -399,6 +413,7 @@ The application should provide:
 The application should continue running even if:
 
 - no news articles are found
+- a Google News URL cannot be decoded
 - an article URL is unreachable
 - article text extraction fails
 - an article is blocked by a cookie page
@@ -418,7 +433,7 @@ Possible optimization strategies:
 - reuse stored analysis results
 - only call Gemini when needed
 - limit the number of articles processed per request
-- avoid repeated extraction attempts for known blocked articles
+- avoid repeated extraction attempts for known failed articles
 
 ### 6.4 Security
 
@@ -473,9 +488,9 @@ Alternative:
 
 ### News and Article Extraction Libraries
 
-- `gnews`: retrieves news metadata and URLs from Google News RSS
-- `newspaper3k`: primary full-text article extraction library
-- `trafilatura`: open-source fallback library for robust web text extraction
+- `gnews`: retrieves news metadata and Google News RSS URLs
+- `googlenewsdecoder`: decodes Google News redirect URLs into publisher URLs
+- `newspaper3k`: extracts full article text from decoded publisher URLs
 
 ### Financial Data Libraries
 
@@ -524,7 +539,6 @@ Alternative:
     ├── ticker_utils.py
     ├── formatting.py
     └── error_handling.py
-```
 
 ## 9. Data Model
 
@@ -536,7 +550,8 @@ Properties:
 
 - `article_id`
 - `title`
-- `url`
+- `google_news_url`
+- `publisher_url`
 - `source`
 - `published_at`
 - `description`
@@ -544,7 +559,6 @@ Properties:
 - `detected_company_name`
 - `detected_ticker`
 - `full_text`
-- `fallback_text`
 - `text_extraction_status`
 - `extraction_error_reason`
 - `sentiment_score`
@@ -558,8 +572,9 @@ Properties:
 Possible values for `text_extraction_status`:
 
 - `success`
-- `partial`
-- `blocked`
+- `decode_failed`
+- `extraction_failed`
+- `empty_article`
 - `failed`
 
 ### 9.2 Stock Entity
@@ -634,7 +649,6 @@ Properties:
 - `number_of_articles_found`
 - `number_of_articles_analyzed`
 - `number_of_failed_articles`
-- `number_of_blocked_articles`
 - `status`
 - `error_message`
 
@@ -684,6 +698,7 @@ Allow users to search for company-related news manually.
 Components:
 
 - company or ticker search input
+- country selector
 - number of articles selector
 - date range selector if available
 - search button
@@ -723,11 +738,11 @@ Components:
 
 1. User enters a company name or ticker.
 2. Application fetches related news using `gnews`.
-3. Application extracts article text using `newspaper3k`.
-4. If `newspaper3k` fails, the application tries `trafilatura`.
-5. If article extraction still fails, the application uses title and description from `gnews` as fallback text.
-6. Application analyzes sentiment using the Natural Language API.
-7. Application extracts entities using the Natural Language API.
+3. Application decodes the Google News URL using `googlenewsdecoder`.
+4. Application extracts article text from the decoded publisher URL using `newspaper3k`.
+5. If article extraction fails, the article is marked as failed and skipped for sentiment/entity analysis.
+6. Application analyzes sentiment using the Natural Language API for successfully extracted articles.
+7. Application extracts entities using the Natural Language API for successfully extracted articles.
 8. Application optionally calls Gemini for summary and advanced extraction.
 9. Application stores the result in Datastore.
 10. Application displays the results in the UI.
@@ -745,47 +760,49 @@ Components:
 
 ## 12. Error Handling
 
-The application handles the following errors:
-
 ### 12.1 No News Found
 
 If no news is found, the application displays a message and allows the user to try another keyword.
 
-### 12.2 Article Extraction Failed
+### 12.2 URL Decoding Failed
 
-If full article extraction fails with `newspaper3k`, the application tries `trafilatura`.
+If the Google News URL cannot be decoded, the article is marked as `decode_failed`.
 
-If both extraction methods fail, the application uses the title and description from `gnews` as fallback text.
+The application continues with the next article.
 
-The article is marked with an extraction status such as `partial` or `failed`.
+### 12.3 Article Extraction Failed
 
-### 12.3 Article Blocked by Cookie Page or Paywall
+If full article extraction fails with `newspaper3k`, the article is marked as `extraction_failed`.
 
-If the article content appears to be a cookie page, consent page, paywall, or bot-protection page, the application does not crash.
+The application does not use title and description as fallback analysis text.
 
-Instead, it:
+The application continues with the next article.
 
-- stores the article metadata
-- stores the original URL
-- tries `trafilatura` if `newspaper3k` failed
-- uses title and description as fallback text if full extraction is not possible
-- marks the extraction status as `blocked`
-- stores an extraction error reason if possible
-- continues with the next article
+### 12.4 Empty Article Text
 
-### 12.4 Natural Language API Error
+If extraction technically succeeds but no usable article text is found, the article is marked as `empty_article`.
+
+The application continues with the next article.
+
+### 12.5 Article Blocked by Cookie Page or Paywall
+
+If the article content appears to be blocked by a cookie page, paywall, login page, or bot protection, the application marks the extraction as failed or empty.
+
+The application does not try to bypass protected content.
+
+### 12.6 Natural Language API Error
 
 If sentiment analysis or entity extraction fails, the application stores the article with an error status.
 
-### 12.5 Gemini Error
+### 12.7 Gemini Error
 
 If Gemini summarization fails, the application continues without the AI summary.
 
-### 12.6 Stock Data Unavailable
+### 12.8 Stock Data Unavailable
 
 If stock price data is unavailable, the application still displays news and sentiment analysis.
 
-### 12.7 Datastore Error
+### 12.9 Datastore Error
 
 If storing data fails, the application displays an error message and does not crash.
 
@@ -802,9 +819,8 @@ Tasks:
 - create Streamlit or Dash application
 - implement company news search
 - fetch news metadata and URLs using `gnews`
+- decode Google News URLs using `googlenewsdecoder`
 - extract article text using `newspaper3k`
-- add `trafilatura` as fallback extraction method
-- implement fallback to `gnews` title and description
 - analyze sentiment with Google Cloud Natural Language API
 - extract entities
 - store analyzed articles in Datastore
@@ -890,10 +906,9 @@ Tasks:
 The minimum working version must include:
 
 - company news search
-- news metadata and URL retrieval with `gnews`
+- news metadata and Google News URL retrieval with `gnews`
+- URL decoding with `googlenewsdecoder`
 - article text extraction with `newspaper3k`
-- fallback extraction with `trafilatura`
-- fallback to `gnews` title and description if extraction fails
 - sentiment analysis
 - entity extraction
 - Datastore storage
@@ -923,17 +938,23 @@ Mitigation:
 
 Implement the required base functionality first, then add extensions step by step.
 
+### Risk: Google News URLs are redirects
+
+Mitigation:
+
+Use `googlenewsdecoder` before article extraction.
+
 ### Risk: Article extraction fails for some websites
 
 Mitigation:
 
-Use `newspaper3k` first, then try `trafilatura`, then use title and description from `gnews` as fallback text.
+Mark the article as failed and continue with the next article.
 
 ### Risk: Cookie pages, paywalls, or bot protection block article extraction
 
 Mitigation:
 
-Do not bypass protected content. Mark the article as blocked and continue with fallback text.
+Do not bypass protected content. Mark the article as failed and continue.
 
 ### Risk: API costs or quotas
 
@@ -960,10 +981,10 @@ The project is successful if:
 - the application runs locally
 - the application can be deployed to Google App Engine
 - users can search company news
-- news metadata and URLs are retrieved with `gnews`
+- news metadata and Google News URLs are retrieved with `gnews`
+- Google News URLs are decoded with `googlenewsdecoder`
 - article extraction uses `newspaper3k`
-- failed article extraction is handled with `trafilatura` or fallback metadata
-- blocked or failed article extraction is handled gracefully
+- failed article extraction is handled gracefully
 - sentiment scores are displayed
 - entities are extracted
 - analyzed data is stored in Datastore

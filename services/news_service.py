@@ -56,21 +56,7 @@ def fetch_company_news(
     """
     Fetch recent Google News articles for a company name, ticker, or keyword.
 
-    Supported search examples:
-    - Apple
-    - AAPL
-    - NVIDIA
-    - NVDA
-    - Tesla
-    - TSLA
-
-    news_region is passed to gnews as the country parameter.
-    It represents the Google News regional edition, not necessarily
-    the publisher's physical country.
-
-    Sorting:
-    - "Google relevance": keeps the order returned by Google News / gnews
-    - "Newest first": sorts locally by publication date
+    Uses the gnews package as required by the project.
     """
 
     clean_query = query.strip()
