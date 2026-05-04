@@ -1,9 +1,8 @@
 import streamlit as st
 
+from components.sidebar_search import render_sidebar_search
 from pages.home import show_home
-from pages.search import show_search
-from pages.stock_detail import show_stock_detail
-from pages.stored_data import show_stored_data
+from pages.search_dashboard import show_search_dashboard
 
 
 st.set_page_config(
@@ -14,26 +13,14 @@ st.set_page_config(
 
 
 def main() -> None:
-    st.sidebar.title("Navigation")
+    render_sidebar_search()
 
-    page = st.sidebar.radio(
-        "Go to",
-        [
-            "Home",
-            "Search",
-            "Stock Detail",
-            "Stored Data",
-        ],
-    )
+    active_page = st.session_state.get("active_page", "Home")
 
-    if page == "Home":
+    if active_page == "Search Dashboard":
+        show_search_dashboard()
+    else:
         show_home()
-    elif page == "Search":
-        show_search()
-    elif page == "Stock Detail":
-        show_stock_detail()
-    elif page == "Stored Data":
-        show_stored_data()
 
 
 if __name__ == "__main__":
