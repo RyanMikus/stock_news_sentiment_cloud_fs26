@@ -14,3 +14,5 @@ test_*.py
 # OS / editor
 .DS_Store
 .vscode/
+
+lecture/

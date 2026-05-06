@@ -73,7 +73,13 @@ def fetch_company_news(
         max_results=max_results,
     )
 
-    raw_results = google_news.get_news(clean_query) or []
+    lower_query = clean_query.lower()
+    if "financial" in lower_query or "news" in lower_query:
+        gnews_query = clean_query
+    else:
+        gnews_query = f"{clean_query} financial news"
+
+    raw_results = google_news.get_news(gnews_query) or []
 
     articles: list[dict[str, Any]] = []
 

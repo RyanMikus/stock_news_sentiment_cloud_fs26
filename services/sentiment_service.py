@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -164,6 +165,12 @@ def analyze_article_sentiment(article: dict[str, Any]) -> dict[str, Any]:
 
     Only articles selected for sentiment and successfully extracted should be analyzed.
     """
+    if (
+        article.get("sentiment_analysis_status") == "success"
+        and article.get("sentiment_score") is not None
+    ):
+        return article
+
     full_text = article.get("full_text") or article.get("article_text") or ""
 
     if not article.get("use_for_sentiment"):
@@ -190,6 +197,10 @@ def analyze_article_sentiment(article: dict[str, Any]) -> dict[str, Any]:
             "sentiment_error_reason": "Article text extraction did not succeed.",
         }
 
+    title = (article.get("title") or "").strip()
+    if title and title.lower() not in full_text[:500].lower():
+        full_text = f"{title}\n\n{full_text}"
+
     sentiment_result = analyze_sentiment(full_text)
 
     return {
@@ -199,7 +210,22 @@ def analyze_article_sentiment(article: dict[str, Any]) -> dict[str, Any]:
 
 
 def analyze_articles_sentiment(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Enrich multiple articles with sentiment results.
-    """
-    return [analyze_article_sentiment(article) for article in articles]
+    if not articles:
+        return articles
+
+    results: list[dict | None] = [None] * len(articles)
+
+    with ThreadPoolExecutor(max_workers=min(len(articles), 10)) as executor:
+        future_to_index = {
+            executor.submit(analyze_article_sentiment, article): i
+            for i, article in enumerate(articles)
+        }
+
+        for future in as_completed(future_to_index):
+            i = future_to_index[future]
+            try:
+                results[i] = future.result()
+            except Exception:
+                results[i] = articles[i]
+
+    return [r for r in results if r is not None]

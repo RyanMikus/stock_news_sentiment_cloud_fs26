@@ -1,8 +1,9 @@
 import streamlit as st
 
 from components.sidebar_search import render_sidebar_search
-from pages.home import show_home
-from pages.search_dashboard import show_search_dashboard
+from views.home import show_home
+from views.search_dashboard import show_search_web
+from views.stored_data import show_search_database
 
 
 st.set_page_config(
@@ -17,8 +18,10 @@ def main() -> None:
 
     active_page = st.session_state.get("active_page", "Home")
 
-    if active_page == "Search Dashboard":
-        show_search_dashboard()
+    if active_page == "Search Web":
+        show_search_web()
+    elif active_page == "Search Database":
+        show_search_database()
     else:
         show_home()
 

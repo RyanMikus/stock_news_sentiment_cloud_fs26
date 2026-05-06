@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Optional
 import re
@@ -35,6 +36,9 @@ KNOWN_STOCK_PROFILE_URL_PATTERNS = [
     "nasdaq.com/market-activity/stocks/",
     "google.com/finance/quote/",
 ]
+
+# Module-level cache: avoids re-decoding the same Google News URL across reruns
+_decode_cache: dict[str, tuple[Optional[str], Optional[str]]] = {}
 
 
 @dataclass
@@ -78,37 +82,34 @@ def _newspaper_config() -> Config:
 
 
 def _decode_google_news_url(google_news_url: str) -> tuple[Optional[str], Optional[str]]:
-    """
-    Decode a Google News RSS URL into the real publisher URL.
-    """
     if not google_news_url:
         return None, "Missing Google News URL"
+
+    if google_news_url in _decode_cache:
+        return _decode_cache[google_news_url]
 
     try:
         decoded = gnewsdecoder(google_news_url)
 
         if not isinstance(decoded, dict):
-            return None, "googlenewsdecoder returned an unexpected response type"
-
-        if decoded.get("status") is True and decoded.get("decoded_url"):
-            return decoded["decoded_url"], None
-
-        return None, decoded.get("message", "Google News URL could not be decoded")
+            result = None, "googlenewsdecoder returned an unexpected response type"
+        elif decoded.get("status") is True and decoded.get("decoded_url"):
+            result = decoded["decoded_url"], None
+        else:
+            result = None, decoded.get("message", "Google News URL could not be decoded")
 
     except Exception as error:
-        return None, f"googlenewsdecoder error: {type(error).__name__}: {error}"
+        result = None, f"googlenewsdecoder error: {type(error).__name__}: {error}"
+
+    if result[0] is not None:
+        _decode_cache[google_news_url] = result
+
+    return result
 
 
 def _extract_with_newspaper(
     publisher_url: str,
 ) -> tuple[Optional[str], str, Optional[str]]:
-    """
-    Returns:
-    - extracted text or None
-    - status: success, empty_article, extraction_failed
-    - error/warning reason
-    """
-
     if _is_known_stock_profile_url(publisher_url):
         return (
             None,
@@ -121,7 +122,7 @@ def _extract_with_newspaper(
         article.download()
         article.parse()
 
-        text = _clean_text(article.text)
+        text = _clean_text(article.text)[:100_000]
 
         if not text:
             return (
@@ -155,92 +156,92 @@ def _extract_with_newspaper(
         )
 
 
-def extract_article_text(news_item: dict) -> ArticleExtractionResult:
-    """
-    Phase 3 article extraction flow.
+def _process_news_item(item: dict) -> dict:
+    from services.datastore_service import get_article_by_url
 
-    1. Take Google News URL from gnews result.
-    2. Decode it with googlenewsdecoder.
-    3. Extract article text with newspaper3k.
-    4. Mark articles with at least 1000 extracted characters as success.
-    5. Mark empty, short, blocked, unusable, and known stock profile pages as not ready.
-    """
-
-    google_news_url = news_item.get("url") or ""
-    title = news_item.get("title") or "Untitled article"
+    google_news_url = item.get("url") or ""
+    title = item.get("title") or "Untitled article"
 
     publisher_url, decode_error = _decode_google_news_url(google_news_url)
 
     if not publisher_url:
-        return ArticleExtractionResult(
-            google_news_url=google_news_url,
-            publisher_url=None,
-            title=title,
-            full_text=None,
-            text_extraction_status="decode_failed",
-            extraction_error_reason=decode_error,
-            extraction_method="googlenewsdecoder",
-        )
+        return {
+            **item,
+            "google_news_url": google_news_url,
+            "publisher_url": None,
+            "title": title,
+            "full_text": None,
+            "article_text": None,
+            "text_extraction_status": "decode_failed",
+            "extraction_error_reason": decode_error,
+            "extraction_method": "googlenewsdecoder",
+            "ready_for_sentiment": False,
+            "use_for_sentiment": False,
+        }
+
+    cached = get_article_by_url(publisher_url)
+
+    if cached:
+        return {
+            **item,
+            **cached,
+            "google_news_url": google_news_url,
+            "publisher_url": publisher_url,
+            "extraction_method": "datastore_cache",
+            "ready_for_sentiment": True,
+            "use_for_sentiment": True,
+            "from_cache": True,
+        }
 
     article_text, status, reason = _extract_with_newspaper(publisher_url)
+    use = status == "success" and len(article_text or "") >= MIN_USABLE_TEXT_LENGTH
 
-    if not article_text:
-        return ArticleExtractionResult(
-            google_news_url=google_news_url,
-            publisher_url=publisher_url,
-            title=title,
-            full_text=None,
-            text_extraction_status=status,
-            extraction_error_reason=reason,
-            extraction_method="newspaper3k",
-        )
-
-    return ArticleExtractionResult(
-        google_news_url=google_news_url,
-        publisher_url=publisher_url,
-        title=title,
-        full_text=article_text,
-        text_extraction_status=status,
-        extraction_error_reason=reason,
-        extraction_method="newspaper3k",
-    )
+    return {
+        **item,
+        "google_news_url": google_news_url,
+        "publisher_url": publisher_url,
+        "title": title,
+        "full_text": article_text,
+        "article_text": article_text,
+        "text_extraction_status": status,
+        "extraction_error_reason": reason,
+        "extraction_method": "newspaper3k",
+        "ready_for_sentiment": use,
+        "use_for_sentiment": use,
+    }
 
 
 def extract_articles(news_items: list[dict]) -> list[dict]:
-    """
-    Enrich gnews result dictionaries with decoded publisher URLs and extracted text.
+    if not news_items:
+        return []
 
-    Rules:
-    - success: ready for sentiment if full_text has at least 1000 characters
-    - empty_article: not ready for sentiment
-    - extraction_failed: not ready for sentiment
-    - decode_failed: not ready for sentiment
-    """
+    results: list[dict | None] = [None] * len(news_items)
+    max_workers = min(len(news_items), 10)
 
-    extracted_articles = []
-
-    for item in news_items:
-        result = extract_article_text(item)
-        text_length = len(result.full_text or "")
-
-        default_use_for_sentiment = (
-            result.text_extraction_status == "success"
-            and text_length >= MIN_USABLE_TEXT_LENGTH
-        )
-
-        enriched_item = {
-            **item,
-            "google_news_url": result.google_news_url,
-            "publisher_url": result.publisher_url,
-            "full_text": result.full_text,
-            "article_text": result.full_text,
-            "text_extraction_status": result.text_extraction_status,
-            "extraction_error_reason": result.extraction_error_reason,
-            "extraction_method": result.extraction_method,
-            "ready_for_sentiment": default_use_for_sentiment,
-            "use_for_sentiment": default_use_for_sentiment,
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {
+            executor.submit(_process_news_item, item): i
+            for i, item in enumerate(news_items)
         }
 
-        extracted_articles.append(enriched_item)
+        for future in as_completed(future_to_index):
+            i = future_to_index[future]
+            try:
+                results[i] = future.result()
+            except Exception as error:
+                item = news_items[i]
+                results[i] = {
+                    **item,
+                    "google_news_url": item.get("url") or "",
+                    "publisher_url": None,
+                    "title": item.get("title") or "Untitled article",
+                    "full_text": None,
+                    "article_text": None,
+                    "text_extraction_status": "extraction_failed",
+                    "extraction_error_reason": f"Unexpected error: {error}",
+                    "extraction_method": "newspaper3k",
+                    "ready_for_sentiment": False,
+                    "use_for_sentiment": False,
+                }
 
-    return extracted_articles
+    return [r for r in results if r is not None]

@@ -1,3 +1,4 @@
+import io
 import re
 
 import pandas as pd
@@ -44,10 +45,6 @@ def calculate_weighted_sentiment(article: dict) -> float | None:
 
 
 def prepare_article_analysis_selection(article: dict) -> None:
-    """
-    Since the checkbox was removed, successfully extracted articles are selected
-    automatically for sentiment and entity analysis. Failed articles are not selected.
-    """
     usable_for_sentiment = is_usable_for_sentiment(article)
 
     article["use_for_sentiment"] = usable_for_sentiment
@@ -55,10 +52,6 @@ def prepare_article_analysis_selection(article: dict) -> None:
 
 
 def build_stable_article_key(article: dict, index: int) -> str:
-    """
-    Builds a stable Streamlit key so Details expanders do not share open/closed
-    state across Passed and Failed filtered views.
-    """
     raw_key = (
         article.get("publisher_url")
         or article.get("google_news_url")
@@ -100,6 +93,11 @@ def render_sentence_level_sentiment(article: dict) -> None:
         pd.DataFrame(sentence_rows),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "sentence": st.column_config.TextColumn("Sentence"),
+            "score": st.column_config.NumberColumn("Score", format="%.3f"),
+            "magnitude": st.column_config.NumberColumn("Magnitude", format="%.3f"),
+        },
     )
 
 
@@ -135,6 +133,12 @@ def render_entity_result(article: dict) -> None:
         pd.DataFrame(entity_rows),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "name": st.column_config.TextColumn("Name"),
+            "type": st.column_config.TextColumn("Type"),
+            "salience": st.column_config.NumberColumn("Salience", format="%.3f"),
+            "wikipedia_url": st.column_config.LinkColumn("Wikipedia"),
+        },
     )
 
 
@@ -216,7 +220,15 @@ def render_original_article_button(article: dict) -> None:
     st.caption("No article link available.")
 
 
-def render_article_card(article: dict, index: int) -> None:
+def _escape_markdown(text: str) -> str:
+    return re.sub(r"([\\`*_{}[\]()#+\-!$|])", r"\\\1", text)
+
+
+def render_article_card(
+    article: dict,
+    index: int,
+    show_save_checkbox: bool = False,
+) -> None:
     prepare_article_analysis_selection(article)
 
     title = article.get("title") or "Untitled article"
@@ -225,8 +237,21 @@ def render_article_card(article: dict, index: int) -> None:
     article_key = build_stable_article_key(article, index)
 
     with st.container(border=True, key=f"article_card_{article_key}"):
-        st.subheader(f"{index + 1}. {title}")
-        st.caption(f"{source} · {published_at}")
+        if show_save_checkbox:
+            title_col, chk_col = st.columns([11, 1])
+            with title_col:
+                st.subheader(f"{index + 1}. {_escape_markdown(title)}")
+            with chk_col:
+                st.checkbox(
+                    "Save",
+                    value=True,
+                    key=f"save_chk_{article_key}",
+                    label_visibility="collapsed",
+                )
+        else:
+            st.subheader(f"{index + 1}. {_escape_markdown(title)}")
+
+        st.caption(f"{_escape_markdown(source)} · {published_at}")
 
         render_article_card_metrics(article)
         render_original_article_button(article)
@@ -235,120 +260,147 @@ def render_article_card(article: dict, index: int) -> None:
             render_article_details(article)
 
 
-def set_article_status_filter(status_name: str) -> None:
-    st.session_state.article_status_filter = status_name
-
-
-def initialize_article_filter_state() -> None:
-    if "article_status_filter" not in st.session_state:
-        st.session_state.article_status_filter = "Passed"
-
-    if st.session_state.article_status_filter not in ["Passed", "Failed"]:
-        st.session_state.article_status_filter = "Passed"
-
-
-def filter_articles_by_status(
-    articles: list[dict],
-    selected_status_filter: str,
-) -> list[dict]:
-    filtered_articles = []
+def _build_article_export_dataframe(articles: list[dict]) -> pd.DataFrame:
+    rows = []
 
     for article in articles:
-        passed = article_passed_extraction(article)
+        entities = article.get("entities") or []
+        entity_names_preview = ", ".join(
+            e["name"] for e in entities[:10] if e.get("name")
+        )
 
-        if selected_status_filter == "Passed" and passed:
-            filtered_articles.append(article)
+        rows.append(
+            {
+                "title": article.get("title"),
+                "source": article.get("source"),
+                "published_at": article.get("published_at"),
+                "query": article.get("query"),
+                "sentiment_score": article.get("sentiment_score"),
+                "sentiment_magnitude": article.get("sentiment_magnitude"),
+                "weighted_sentiment": article.get("weighted_sentiment"),
+                "sentiment_label": article.get("sentiment_label"),
+                "entity_names": entity_names_preview,
+                "url": article.get("url"),
+            }
+        )
 
-        if selected_status_filter == "Failed" and not passed:
-            filtered_articles.append(article)
-
-    return filtered_articles
+    return pd.DataFrame(rows)
 
 
-def render_article_filter_buttons(
-    passed_count: int,
-    failed_count: int,
-) -> str:
-    initialize_article_filter_state()
+def _render_article_export_buttons(articles: list[dict]) -> None:
+    df = _build_article_export_dataframe(articles)
 
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stHorizontalBlock"]:has(div.st-key-article_filter_button_Passed) {
-            gap: 0.5rem;
-            margin-top: 0.25rem;
-            margin-bottom: 0.5rem;
-        }
+    col1, col2, col3 = st.columns(3)
 
-        div[data-testid="stHorizontalBlock"]:has(div.st-key-article_filter_button_Passed) button {
-            white-space: nowrap;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+    with col1:
+        st.download_button(
+            "Download CSV",
+            data=df.to_csv(index=False).encode("utf-8"),
+            file_name="articles.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    with col2:
+        st.download_button(
+            "Download JSON",
+            data=df.to_json(orient="records", date_format="iso", indent=2),
+            file_name="articles.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    with col3:
+        excel_df = df.copy()
+        for col in excel_df.select_dtypes(include="datetimetz").columns:
+            excel_df[col] = excel_df[col].dt.tz_convert(None)
+
+        excel_buffer = io.BytesIO()
+        excel_df.to_excel(excel_buffer, index=False)
+        excel_buffer.seek(0)
+
+        st.download_button(
+            "Download Excel",
+            data=excel_buffer.getvalue(),
+            file_name="articles.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+
+def _render_save_section(
+    all_articles: list[dict],
+    saveable_articles: list[dict],
+) -> None:
+    from services.datastore_service import save_articles
+
+    selected_count = sum(
+        1 for a in saveable_articles
+        if st.session_state.get(
+            f"save_chk_{build_stable_article_key(a, all_articles.index(a))}",
+            True,
+        )
     )
 
-    filter_options = [
-        ("Passed", passed_count),
-        ("Failed", failed_count),
-    ]
-
-    selected_filter = st.session_state.article_status_filter
-
-    columns = st.columns(len(filter_options))
-
-    for column, (status_name, count) in zip(columns, filter_options):
-        with column:
-            is_active = status_name == selected_filter
-
-            st.button(
-                f"{status_name} ({count})",
-                key=f"article_filter_button_{status_name}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary",
-                on_click=set_article_status_filter,
-                args=(status_name,),
+    if st.button(
+        f"Save {selected_count} selected to Database",
+        type="primary",
+        use_container_width=True,
+        disabled=selected_count == 0,
+    ):
+        to_save = [
+            a for a in saveable_articles
+            if st.session_state.get(
+                f"save_chk_{build_stable_article_key(a, all_articles.index(a))}",
+                True,
             )
+        ]
+        save_articles(to_save)
 
-    return st.session_state.article_status_filter
 
-
-def render_articles_tab(articles: list[dict]) -> None:
+def render_articles_tab(articles: list[dict], show_save: bool = False) -> None:
     if not articles:
-        st.info("No articles available. Run a search from the sidebar.")
+        st.info("No articles available.")
         return
 
     for article in articles:
         prepare_article_analysis_selection(article)
 
-    st.subheader("Articles")
-
-    passed_count = sum(article_passed_extraction(article) for article in articles)
-    failed_count = len(articles) - passed_count
+    passed_articles = [a for a in articles if article_passed_extraction(a)]
+    failed_articles = [a for a in articles if not article_passed_extraction(a)]
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Total articles", len(articles))
-    col2.metric("Passed extraction", passed_count)
-    col3.metric("Failed extraction", failed_count)
+    col2.metric("Passed extraction", len(passed_articles))
+    col3.metric("Failed extraction", len(failed_articles))
 
-    selected_status_filter = render_article_filter_buttons(
-        passed_count=passed_count,
-        failed_count=failed_count,
-    )
+    _render_article_export_buttons(articles)
 
-    filtered_articles = filter_articles_by_status(
-        articles=articles,
-        selected_status_filter=selected_status_filter,
-    )
-
-    st.caption(f"Showing {len(filtered_articles)} of {len(articles)} article(s).")
+    if show_save:
+        saveable = [
+            a for a in passed_articles
+            if a.get("sentiment_analysis_status") == "success"
+        ]
+        _render_save_section(articles, saveable)
 
     st.divider()
 
-    if not filtered_articles:
-        st.info(f"No {selected_status_filter.lower()} articles available.")
-        return
+    if not passed_articles:
+        st.info("No articles passed extraction.")
+    else:
+        for article in passed_articles:
+            is_saveable = (
+                show_save
+                and article.get("sentiment_analysis_status") == "success"
+            )
+            render_article_card(
+                article,
+                articles.index(article),
+                show_save_checkbox=is_saveable,
+            )
 
-    for article in filtered_articles:
-        original_index = articles.index(article)
-        render_article_card(article, original_index)
+    if failed_articles:
+        st.divider()
+        with st.expander(f"View {len(failed_articles)} failed article(s)"):
+            for article in failed_articles:
+                render_article_card(article, articles.index(article))

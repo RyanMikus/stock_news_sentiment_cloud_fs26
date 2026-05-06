@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -146,6 +147,9 @@ def extract_article_entities(article: dict[str, Any]) -> dict[str, Any]:
     Only articles selected for sentiment/entity analysis and successfully extracted
     should be sent to the Natural Language API.
     """
+    if article.get("entity_extraction_status") == "success":
+        return article
+
     full_text = article.get("full_text") or article.get("article_text") or ""
 
     if not article.get("use_for_sentiment"):
@@ -164,6 +168,10 @@ def extract_article_entities(article: dict[str, Any]) -> dict[str, Any]:
             "entity_error_reason": "Article text extraction did not succeed.",
         }
 
+    title = (article.get("title") or "").strip()
+    if title and title.lower() not in full_text[:500].lower():
+        full_text = f"{title}\n\n{full_text}"
+
     entity_result = extract_entities(full_text)
 
     return {
@@ -173,7 +181,22 @@ def extract_article_entities(article: dict[str, Any]) -> dict[str, Any]:
 
 
 def extract_articles_entities(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Enrich multiple articles with entity extraction results.
-    """
-    return [extract_article_entities(article) for article in articles]
+    if not articles:
+        return articles
+
+    results: list[dict | None] = [None] * len(articles)
+
+    with ThreadPoolExecutor(max_workers=min(len(articles), 10)) as executor:
+        future_to_index = {
+            executor.submit(extract_article_entities, article): i
+            for i, article in enumerate(articles)
+        }
+
+        for future in as_completed(future_to_index):
+            i = future_to_index[future]
+            try:
+                results[i] = future.result()
+            except Exception:
+                results[i] = articles[i]
+
+    return [r for r in results if r is not None]
