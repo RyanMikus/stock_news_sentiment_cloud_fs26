@@ -15,7 +15,7 @@ def _render_results(articles: list[dict]) -> None:
         render_overview_tab(articles)
 
     with articles_tab:
-        render_articles_tab(articles)
+        render_articles_tab(articles, show_delete=True)
 
     with stocks_tab:
         render_stocks_from_articles(articles)

@@ -228,6 +228,7 @@ def render_article_card(
     article: dict,
     index: int,
     show_save_checkbox: bool = False,
+    show_delete_checkbox: bool = False,
 ) -> None:
     prepare_article_analysis_selection(article)
 
@@ -246,6 +247,17 @@ def render_article_card(
                     "Save",
                     value=True,
                     key=f"save_chk_{article_key}",
+                    label_visibility="collapsed",
+                )
+        elif show_delete_checkbox:
+            title_col, chk_col = st.columns([11, 1])
+            with title_col:
+                st.subheader(f"{index + 1}. {_escape_markdown(title)}")
+            with chk_col:
+                st.checkbox(
+                    "Delete",
+                    value=False,
+                    key=f"delete_chk_{article_key}",
                     label_visibility="collapsed",
                 )
         else:
@@ -358,7 +370,38 @@ def _render_save_section(
         save_articles(to_save)
 
 
-def render_articles_tab(articles: list[dict], show_save: bool = False) -> None:
+def _render_delete_section(
+    all_articles: list[dict],
+    deletable_articles: list[dict],
+) -> None:
+    from services.datastore_service import delete_articles
+
+    selected_ids = [
+        a["datastore_id"]
+        for a in deletable_articles
+        if st.session_state.get(
+            f"delete_chk_{build_stable_article_key(a, all_articles.index(a))}",
+            False,
+        )
+        and a.get("datastore_id")
+    ]
+
+    if st.button(
+        f"Delete {len(selected_ids)} selected from Database",
+        use_container_width=True,
+        disabled=len(selected_ids) == 0,
+    ):
+        delete_articles(selected_ids)
+        st.toast(f"Deleted {len(selected_ids)} article(s) from database.")
+        if "stored_query_results" in st.session_state:
+            st.session_state.stored_query_results = [
+                a for a in st.session_state.stored_query_results
+                if a.get("datastore_id") not in selected_ids
+            ]
+        st.rerun()
+
+
+def render_articles_tab(articles: list[dict], show_save: bool = False, show_delete: bool = False) -> None:
     if not articles:
         st.info("No articles available.")
         return
@@ -383,6 +426,9 @@ def render_articles_tab(articles: list[dict], show_save: bool = False) -> None:
         ]
         _render_save_section(articles, saveable)
 
+    if show_delete:
+        _render_delete_section(articles, passed_articles)
+
     st.divider()
 
     if not passed_articles:
@@ -393,10 +439,12 @@ def render_articles_tab(articles: list[dict], show_save: bool = False) -> None:
                 show_save
                 and article.get("sentiment_analysis_status") == "success"
             )
+            is_deletable = show_delete
             render_article_card(
                 article,
                 articles.index(article),
                 show_save_checkbox=is_saveable,
+                show_delete_checkbox=is_deletable,
             )
 
     if failed_articles:

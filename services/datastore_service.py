@@ -290,6 +290,14 @@ def query_articles(
     return articles
 
 
+def delete_articles(article_ids: list[int]) -> int:
+    client = _get_client()
+    keys = [client.key(ARTICLE_KIND, id_) for id_ in article_ids if id_]
+    if keys:
+        client.delete_multi(keys)
+    return len(keys)
+
+
 def get_article_by_url(url: str) -> dict[str, Any] | None:
     """
     Returns a stored article dict if the URL exists in Datastore, None otherwise.

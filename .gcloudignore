@@ -1,0 +1,9 @@
+#!include:.gitignore
+
+.gcloudignore
+.git/
+.venv/
+__pycache__/
+*.pyc
+lecture/
+README.md
