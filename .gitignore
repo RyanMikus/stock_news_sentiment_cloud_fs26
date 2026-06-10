@@ -3,6 +3,9 @@
 credentials/
 *.json
 
+# Claude AI session data
+.claude/
+
 # Python
 __pycache__/
 *.pyc

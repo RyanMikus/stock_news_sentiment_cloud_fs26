@@ -267,6 +267,38 @@ def render_entity_overview(articles: list[dict]) -> None:
     )
 
 
+@st.fragment
+def _gemini_summary_fragment(articles: list[dict]) -> None:
+    if "gemini_analysis" not in st.session_state:
+        with st.spinner("Analyzing articles with Gemini..."):
+            from services.gemini_service import analyze_articles_with_gemini
+            from services.stock_service import collect_ranked_tickers_with_resolver
+            analysis = analyze_articles_with_gemini(articles)
+            resolver = analysis.get("resolver") or {}
+            gemini_ranked = collect_ranked_tickers_with_resolver(articles, resolver)
+            st.session_state.gemini_analysis = analysis
+            st.session_state.gemini_ranked_tickers = gemini_ranked
+            st.session_state.gemini_tickers_run = True
+
+    summary = (st.session_state.get("gemini_analysis") or {}).get("summary", "")
+    if summary.startswith("Analysis unavailable"):
+        st.error(summary)
+    elif summary:
+        st.markdown(
+            "<style>code{background:transparent!important;"
+            "color:inherit!important;font-family:inherit!important;"
+            "font-size:inherit!important;padding:0!important;"
+            "border:none!important}</style>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(summary)
+
+
+def render_gemini_summary(articles: list[dict]) -> None:
+    st.subheader("AI Summary")
+    _gemini_summary_fragment(articles)
+
+
 def render_overview_tab(articles: list[dict]) -> None:
     if not articles:
         st.info("No search results yet. Use the search configuration in the sidebar.")
@@ -277,3 +309,7 @@ def render_overview_tab(articles: list[dict]) -> None:
     st.divider()
 
     render_entity_overview(articles)
+
+    st.divider()
+
+    render_gemini_summary(articles)

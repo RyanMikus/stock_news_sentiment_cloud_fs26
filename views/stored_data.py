@@ -4,12 +4,12 @@ import streamlit as st
 
 from components.article_cards import render_articles_tab
 from components.overview import render_overview_tab
-from views.stock_detail import show_stock_detail
+from views.stock_detail import render_stocks_from_articles
 from services.datastore_service import query_articles
 
 
 def _render_results(articles: list[dict]) -> None:
-    overview_tab, articles_tab, stocks_tab = st.tabs(["Overview", "Articles", "Stocks"])
+    overview_tab, articles_tab, stocks_tab = st.tabs(["Overview", "Articles", "Charts"])
 
     with overview_tab:
         render_overview_tab(articles)
@@ -18,12 +18,7 @@ def _render_results(articles: list[dict]) -> None:
         render_articles_tab(articles)
 
     with stocks_tab:
-        st.subheader("Stocks")
-        st.info(
-            "This tab will later connect searched articles to stock data, charts, "
-            "quantitative metrics, and related stock suggestions."
-        )
-        show_stock_detail()
+        render_stocks_from_articles(articles)
 
 
 def _render_query_section() -> None:
@@ -83,6 +78,9 @@ def _render_query_section() -> None:
                     end_date=end_date,
                 )
                 st.session_state.stored_query_results = results
+                for key in list(st.session_state.keys()):
+                    if key.startswith("gemini_"):
+                        del st.session_state[key]
             except Exception as error:
                 st.error(f"Query failed: {type(error).__name__}: {error}")
                 return

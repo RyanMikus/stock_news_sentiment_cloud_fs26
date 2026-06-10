@@ -2,7 +2,7 @@ import streamlit as st
 
 from components.article_cards import render_articles_tab
 from components.overview import render_overview_tab
-from views.stock_detail import show_stock_detail
+from views.stock_detail import render_stocks_from_articles
 from services.news_service import fetch_company_news
 from services.article_service import extract_articles
 from services.sentiment_service import analyze_articles_sentiment
@@ -28,16 +28,6 @@ FETCH_INCREMENT = 10
 MIN_USABLE_TEXT_LENGTH = 1000
 
 
-def format_datetime(value) -> str:
-    if value is None:
-        return "Unknown date"
-
-    try:
-        return value.strftime("%Y-%m-%d %H:%M")
-    except AttributeError:
-        return str(value)
-
-
 def is_usable_for_sentiment(article: dict) -> bool:
     status = article.get("text_extraction_status")
     full_text = article.get("full_text") or ""
@@ -45,27 +35,8 @@ def is_usable_for_sentiment(article: dict) -> bool:
     return status == "success" and len(full_text) >= MIN_USABLE_TEXT_LENGTH
 
 
-def calculate_weighted_sentiment(article: dict) -> float | None:
-    weighted_sentiment = article.get("weighted_sentiment")
-
-    if weighted_sentiment is not None:
-        return weighted_sentiment
-
-    sentiment_score = article.get("sentiment_score")
-    sentiment_magnitude = article.get("sentiment_magnitude")
-
-    if sentiment_score is None or sentiment_magnitude is None:
-        return None
-
-    return sentiment_score * sentiment_magnitude
-
-
 def count_ready_articles(articles: list[dict]) -> int:
     return sum(bool(article.get("ready_for_sentiment")) for article in articles)
-
-
-def count_selected_articles(articles: list[dict]) -> int:
-    return sum(bool(article.get("use_for_sentiment")) for article in articles)
 
 
 def prepare_article_analysis_selection(article: dict) -> None:
@@ -313,6 +284,9 @@ def _render_search_form() -> None:
                 st.session_state.requested_google_candidates = requested_candidates
                 st.session_state.target_ready_articles = target_ready_articles
                 st.session_state.sidebar_query = clean_query
+                for key in list(st.session_state.keys()):
+                    if key.startswith("gemini_"):
+                        del st.session_state[key]
                 st.session_state.last_search_config = {
                     "query": clean_query,
                     "country_label": country_label,
@@ -363,7 +337,7 @@ def show_search_web() -> None:
             f"This usually happens when publishers block extraction or return short text."
         )
 
-    overview_tab, articles_tab, stocks_tab = st.tabs(["Overview", "Articles", "Stocks"])
+    overview_tab, articles_tab, stocks_tab = st.tabs(["Overview", "Articles", "Charts"])
 
     with overview_tab:
         render_overview_tab(articles)
@@ -372,9 +346,4 @@ def show_search_web() -> None:
         render_articles_tab(articles, show_save=True)
 
     with stocks_tab:
-        st.subheader("Stocks")
-        st.info(
-            "This tab will later connect searched articles to stock data, charts, "
-            "quantitative metrics, and related stock suggestions."
-        )
-        show_stock_detail()
+        render_stocks_from_articles(articles)
