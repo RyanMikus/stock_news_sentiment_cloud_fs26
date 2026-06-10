@@ -142,6 +142,29 @@ def render_entity_result(article: dict) -> None:
     )
 
 
+def render_classification_result(article: dict) -> None:
+    categories = article.get("categories") or []
+
+    st.subheader("Content Categories")
+
+    if article.get("classification_error_reason"):
+        st.warning(article["classification_error_reason"])
+
+    if not categories:
+        st.info("No content categories available.")
+        return
+
+    st.dataframe(
+        pd.DataFrame(categories),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "name": st.column_config.TextColumn("Category"),
+            "confidence": st.column_config.NumberColumn("Confidence", format="%.3f"),
+        },
+    )
+
+
 def render_extracted_text(article: dict) -> None:
     full_text = article.get("full_text") or ""
 
@@ -160,6 +183,10 @@ def render_article_details(article: dict) -> None:
     st.divider()
 
     render_entity_result(article)
+
+    st.divider()
+
+    render_classification_result(article)
 
     st.divider()
 

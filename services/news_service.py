@@ -6,6 +6,12 @@ from typing import Any
 from gnews import GNews
 
 
+TOPIC_OPTIONS = [
+    "WORLD", "NATION", "BUSINESS", "TECHNOLOGY",
+    "ENTERTAINMENT", "SPORTS", "SCIENCE", "HEALTH",
+]
+
+
 @dataclass
 class NewsArticle:
     title: str
@@ -102,5 +108,43 @@ def fetch_company_news(
             key=lambda article: article["published_at"] or datetime.min,
             reverse=True,
         )
+
+    return articles
+
+
+def fetch_topic_news(
+    topic: str,
+    max_results: int = 30,
+    language: str = "en",
+    news_region: str = "US",
+) -> list[dict[str, Any]]:
+    topic_upper = topic.upper()
+    if topic_upper not in TOPIC_OPTIONS:
+        raise ValueError(f"Invalid topic '{topic}'. Must be one of: {TOPIC_OPTIONS}")
+
+    max_results = max(1, min(max_results, 100))
+
+    google_news = GNews(
+        language=language,
+        country=news_region,
+        max_results=max_results,
+    )
+
+    raw_results = google_news.get_news_by_topic(topic_upper) or []
+
+    articles: list[dict[str, Any]] = []
+
+    for item in raw_results:
+        article = NewsArticle(
+            title=item.get("title", "").strip(),
+            description=item.get("description", "").strip(),
+            url=item.get("url", "").strip(),
+            published_at=_parse_published_at(item.get("published date")),
+            source=_extract_source(item),
+            query=f"topic:{topic_upper}",
+            news_region=news_region,
+        )
+        if article.title and article.url:
+            articles.append(asdict(article))
 
     return articles

@@ -3,10 +3,11 @@ import streamlit as st
 from components.article_cards import render_articles_tab
 from components.overview import render_overview_tab
 from views.stock_detail import render_stocks_from_articles
-from services.news_service import fetch_company_news
+from services.news_service import fetch_company_news, fetch_topic_news, TOPIC_OPTIONS
 from services.article_service import extract_articles
 from services.sentiment_service import analyze_articles_sentiment
 from services.entity_service import extract_articles_entities
+from services.classification_service import classify_articles
 
 
 COUNTRY_OPTIONS = {
@@ -198,6 +199,7 @@ def analyze_extracted_articles(articles: list[dict]) -> list[dict]:
 
     analyzed_articles = analyze_articles_sentiment(prepared_articles)
     analyzed_articles = extract_articles_entities(analyzed_articles)
+    analyzed_articles = classify_articles(analyzed_articles)
 
     return analyzed_articles
 
@@ -214,43 +216,55 @@ def initialize_search_session_state() -> None:
 
 
 def _render_search_form() -> None:
+    search_mode = st.radio(
+        "Search mode",
+        options=["Keyword", "Topic"],
+        horizontal=True,
+        key="web_search_mode",
+    )
+
     with st.form("search_web_form"):
-        query = st.text_input(
-            "Company, ticker, or keyword",
-            value=st.session_state.get("sidebar_query", ""),
-            placeholder="e.g. NVIDIA, Apple, Federal Reserve",
-        )
-
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            country_label = st.selectbox(
-                "Country edition",
-                options=list(COUNTRY_OPTIONS.keys()),
-                index=0,
+        if search_mode == "Keyword":
+            query = st.text_input(
+                "Company, ticker, or keyword",
+                value=st.session_state.get("sidebar_query", ""),
+                placeholder="e.g. NVIDIA, Apple, Federal Reserve",
             )
-
-        with col2:
-            period = st.selectbox(
-                "Period",
-                options=["1d", "7d", "30d"],
-                index=1,
-            )
-
-        with col3:
-            sort_by = st.selectbox(
-                "Sort by",
-                options=SORT_OPTIONS,
-                index=0,
-            )
-
-        with col4:
-            target_ready_articles = st.slider(
-                "Target articles",
-                min_value=1,
-                max_value=25,
-                value=min(st.session_state.get("target_ready_articles", 10), 25),
-            )
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                country_label = st.selectbox(
+                    "Country edition",
+                    options=list(COUNTRY_OPTIONS.keys()),
+                    index=0,
+                )
+            with col2:
+                period = st.selectbox("Period", options=["1d", "7d", "30d"], index=1)
+            with col3:
+                sort_by = st.selectbox("Sort by", options=SORT_OPTIONS, index=0)
+            with col4:
+                target_ready_articles = st.slider(
+                    "Target articles",
+                    min_value=1,
+                    max_value=25,
+                    value=min(st.session_state.get("target_ready_articles", 10), 25),
+                )
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                topic = st.selectbox("Topic", options=TOPIC_OPTIONS, index=2)
+            with col2:
+                country_label = st.selectbox(
+                    "Country edition",
+                    options=list(COUNTRY_OPTIONS.keys()),
+                    index=0,
+                )
+            with col3:
+                target_ready_articles = st.slider(
+                    "Target articles",
+                    min_value=1,
+                    max_value=25,
+                    value=min(st.session_state.get("target_ready_articles", 10), 25),
+                )
 
         search_submitted = st.form_submit_button(
             "Search & Analyze",
@@ -259,43 +273,73 @@ def _render_search_form() -> None:
         )
 
     if search_submitted:
-        clean_query = query.strip()
-
-        if not clean_query:
-            st.error("Please enter a search query.")
-            return
-
         country_code = COUNTRY_OPTIONS[country_label]
 
         try:
             with st.spinner("Searching and analyzing..."):
-                extracted_articles, requested_candidates = fetch_and_extract_until_target(
-                    query=clean_query,
-                    target_ready_articles=target_ready_articles,
-                    news_region=country_code,
-                    language="en",
-                    period=period,
-                    sort_by=sort_by,
-                )
+                if search_mode == "Keyword":
+                    clean_query = query.strip()
+                    if not clean_query:
+                        st.error("Please enter a search query.")
+                        return
+                    extracted_articles, requested_candidates = fetch_and_extract_until_target(
+                        query=clean_query,
+                        target_ready_articles=target_ready_articles,
+                        news_region=country_code,
+                        language="en",
+                        period=period,
+                        sort_by=sort_by,
+                    )
+                    display_query = clean_query
+                    last_config = {
+                        "query": clean_query,
+                        "country_label": country_label,
+                        "country_code": country_code,
+                        "period": period,
+                        "sort_by": sort_by,
+                        "target_ready_articles": target_ready_articles,
+                        "requested_google_candidates": requested_candidates,
+                        "search_mode": "Keyword",
+                    }
+                else:
+                    news_items = fetch_topic_news(
+                        topic=topic,
+                        max_results=min(target_ready_articles * 3, MAX_GOOGLE_CANDIDATES),
+                        language="en",
+                        news_region=country_code,
+                    )
+                    news_items = deduplicate_news_items(news_items)
+                    extracted_articles = extract_articles(news_items)
+                    extracted_articles = prepare_articles_for_analysis(extracted_articles)
+                    extracted_articles = limit_to_target_ready_articles(
+                        articles=extracted_articles,
+                        target_ready_articles=target_ready_articles,
+                    )
+                    requested_candidates = len(news_items)
+                    display_query = f"topic:{topic}"
+                    last_config = {
+                        "query": display_query,
+                        "country_label": country_label,
+                        "country_code": country_code,
+                        "period": None,
+                        "sort_by": None,
+                        "target_ready_articles": target_ready_articles,
+                        "requested_google_candidates": requested_candidates,
+                        "search_mode": "Topic",
+                        "topic": topic,
+                    }
 
                 final_articles = analyze_extracted_articles(extracted_articles)
 
                 st.session_state.extracted_articles = final_articles
                 st.session_state.requested_google_candidates = requested_candidates
                 st.session_state.target_ready_articles = target_ready_articles
-                st.session_state.sidebar_query = clean_query
+                if search_mode == "Keyword":
+                    st.session_state.sidebar_query = display_query
                 for key in list(st.session_state.keys()):
                     if key.startswith("gemini_"):
                         del st.session_state[key]
-                st.session_state.last_search_config = {
-                    "query": clean_query,
-                    "country_label": country_label,
-                    "country_code": country_code,
-                    "period": period,
-                    "sort_by": sort_by,
-                    "target_ready_articles": target_ready_articles,
-                    "requested_google_candidates": requested_candidates,
-                }
+                st.session_state.last_search_config = last_config
 
             if not final_articles:
                 st.warning("Search completed, but no articles were found.")
@@ -318,12 +362,18 @@ def show_search_web() -> None:
 
     last_search_config = st.session_state.get("last_search_config")
     if last_search_config:
-        st.caption(
-            f"Search: **{last_search_config.get('query')}** · "
-            f"{last_search_config.get('country_label')} · "
-            f"{last_search_config.get('period')} · "
-            f"{last_search_config.get('sort_by')}"
-        )
+        if last_search_config.get("search_mode") == "Topic":
+            st.caption(
+                f"Topic: **{last_search_config.get('topic')}** · "
+                f"{last_search_config.get('country_label')}"
+            )
+        else:
+            st.caption(
+                f"Search: **{last_search_config.get('query')}** · "
+                f"{last_search_config.get('country_label')} · "
+                f"{last_search_config.get('period')} · "
+                f"{last_search_config.get('sort_by')}"
+            )
 
     target_ready_articles = st.session_state.get("target_ready_articles", 0)
     ready_count = count_ready_articles(articles)

@@ -16,9 +16,11 @@ _EXCLUDE_FROM_INDEXES = (
     "full_text",
     "entities_json",
     "sentence_sentiments_json",
+    "categories_json",
     "extraction_error_reason",
     "sentiment_error_reason",
     "entity_error_reason",
+    "classification_error_reason",
     "publisher_url",
     "google_news_url",
 )
@@ -73,6 +75,9 @@ def _article_to_ds_entity(
             "entity_types": entity_types,
             "entities_json": json.dumps(entities_list),
             "sentence_sentiments_json": json.dumps(sentence_sentiments),
+            "categories_json": json.dumps(article.get("categories") or []),
+            "classification_status": article.get("classification_status") or "",
+            "classification_error_reason": article.get("classification_error_reason") or "",
             "saved_at": datetime.now(timezone.utc),
         }
     )
@@ -92,6 +97,11 @@ def _ds_entity_to_article(ds_entity: datastore.Entity) -> dict[str, Any]:
         )
     except (json.JSONDecodeError, TypeError):
         sentence_sentiments = []
+
+    try:
+        categories = json.loads(ds_entity.get("categories_json") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        categories = []
 
     return {
         "datastore_id": ds_entity.key.id,
@@ -119,6 +129,9 @@ def _ds_entity_to_article(ds_entity: datastore.Entity) -> dict[str, Any]:
         "entity_types": list(ds_entity.get("entity_types") or []),
         "entities": entities,
         "sentence_sentiments": sentence_sentiments,
+        "categories": categories,
+        "classification_status": ds_entity.get("classification_status") or "",
+        "classification_error_reason": ds_entity.get("classification_error_reason") or "",
         "saved_at": ds_entity.get("saved_at"),
     }
 
